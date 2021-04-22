@@ -3,12 +3,14 @@ robot_names:
   - X2
   - X3
   - X4
+  - HM
 
 button_robot_map:
   A: X1
   B: X2
   X: X3
   Y: X4
+  S: HM
 
 flashlight_service_suffixes:
   # X1 and X2
@@ -26,6 +28,7 @@ robot_address_map:
   X2: X2
   X3: X3
   X4: X4
+  HM: HM
 
 select_led_service_suffixes:
   # X1

@@ -20,6 +20,8 @@
 #include <sensor_msgs/Joy.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/String.h>
+#include <std_msgs/Float64.h>
+
 
 #include <map>
 #include <string>
@@ -97,6 +99,12 @@ class SubtTeleop
   /// \brief Index for the right dead man's switch.
   private: int rightDeadMan;
 
+  /// \brief Index for Back Key
+  private: int spinKey;
+
+  /// \brief Boolean to check if gimbal is currently moving
+  private: bool gimbalMove;
+
   /// \brief Subscriber to get input values from the joy control.
   private: ros::Subscriber joySub;
 
@@ -120,11 +128,17 @@ class SubtTeleop
   /// \brief Map from a robot name to a ROS publisher to control comm.
   private: std::map<std::string, ros::Publisher> commPubMap;
 
+  /// \brief Map from a robot name to a ROS publisher to control comm.
+  private: std::map<std::string, ros::Publisher> gimbalPubMap;
+
   /// \brief Map from a robot name to a ROS publisher to control selection LED.
   private: std::map<std::string, ros::Publisher> selPubMap;
 
   /// \brief Map from a robot name to a ROS publisher to control flashlights.
   private: std::map<std::string, ros::Publisher> lightPubMap;
+
+  /// \brief Map from a robot name to a ROS publisher to control lidar pan-rate.
+  private: std::map<std::string, ros::Publisher> lidarPubMap;
 
   /// \brief the name of the robot currently under control.
   private: std::string currentRobot;
@@ -136,7 +150,7 @@ SubtTeleop::SubtTeleop():
   angularScaleTurbo(0), vertical(3), horizontal(2), verticalScale(0),
   verticalScaleTurbo(0), horizontalScale(0), horizontalScaleTurbo(0),
   enableButton(4), enableTurboButton(5), lightOnTrigger(6), lightOffTrigger(7),
-  axisArrowHorizontal(4), axisArrowVertical(5)
+  axisArrowHorizontal(4), axisArrowVertical(5), gimbalMove(0), spinKey(0)
 {
   // Load joy control settings. Setting values must be loaded by rosparam.
   this->nh.param("axis_linear", this->linear, this->linear);
@@ -174,6 +188,9 @@ SubtTeleop::SubtTeleop():
     "light_off_trigger", this->lightOffTrigger, this->lightOffTrigger);
 
   this->nh.param(
+    "spin_lidar_gimbal", this->spinKey, this->spinKey);
+
+  this->nh.param(
     "axis_arrow_horizontal",
     this->axisArrowHorizontal, this->axisArrowHorizontal);
   this->nh.param(
@@ -193,6 +210,16 @@ SubtTeleop::SubtTeleop():
     this->velPubMap[robotName]
       = this->nh.advertise<geometry_msgs::Twist>(
         robotName + "/cmd_vel", 1, true);
+
+    // Create a publisher object to generate a gimbal velocity command, and associate
+    // it to the corresponding robot's name.
+    this->gimbalPubMap[robotName]
+      = this->nh.advertise<geometry_msgs::Twist>(
+        robotName + "/gimbal/cmd_vel", 1, true);
+
+    this->lidarPubMap[robotName]
+      = this->nh.advertise<std_msgs::Float64>(
+        robotName + "/lidar_gimbal/pan_rate_cmd_double", 1, true);
 
     // Create a publisher object to generate a selection command, and associate
     // it to the corresponding robot's name.
@@ -228,6 +255,7 @@ SubtTeleop::SubtTeleop():
 /////////////////////////////////////////////////
 void SubtTeleop::JoyCallback(const sensor_msgs::Joy::ConstPtr &_joy)
 {
+  
   std_msgs::Bool msg;
   // If LT was triggered, turn the lights on.
   if (_joy->buttons[this->lightOnTrigger])
@@ -258,30 +286,32 @@ void SubtTeleop::JoyCallback(const sensor_msgs::Joy::ConstPtr &_joy)
     }
   }
 
+  std_msgs::Float64 msg_d;
+  if (_joy->buttons[this->spinKey])
+  {
+    msg_d.data = 1.0;
+    this->lidarPubMap[this->currentRobot].publish(msg_d);
+  }
+
+  geometry_msgs::Twist cam_cmd;
   // If an arrow key was pressed, send a comm command to the current robot so
   // it sends a message to the one associated with the key.
-  // if (_joy->axes[this->axisArrowVertical] != 0
-  //   || _joy->axes[this->axisArrowHorizontal] != 0)
-  // {
-  //   std_msgs::String addressMsg;
-  //   unsigned int index;
-  //   if (_joy->axes[this->axisArrowVertical] == 1)
-  //     index = 3;
-  //   else if (_joy->axes[this->axisArrowVertical] == -1)
-  //     index = 0;
-  //   else if (_joy->axes[this->axisArrowHorizontal] == 1)
-  //     index = 2;
-  //   else
-  //     index = 1;
-
-  //   if (index < this->robotNames.size())
-  //   {
-  //     addressMsg.data = this->robotAddressMap[this->robotNames[index]];
-  //     ROS_INFO_STREAM("sending a message to " << addressMsg.data);
-  //     this->commPubMap[this->currentRobot].publish(addressMsg);
-  //   }
-  //   return;
-  // }
+  if (_joy->axes[this->axisArrowVertical] != 0
+    || _joy->axes[this->axisArrowHorizontal] != 0)
+  {
+    cam_cmd.angular.y
+      = _joy->axes[this->axisArrowVertical] * 0.5;
+    cam_cmd.angular.z
+      = -_joy->axes[this->axisArrowHorizontal] * 0.5;
+    gimbalMove = true;
+    this->gimbalPubMap[this->currentRobot].publish(cam_cmd);
+  }
+  else if(gimbalMove)
+  {
+    this->gimbalPubMap[this->currentRobot].publish(cam_cmd);
+    gimbalMove = false;
+  }
+    
 
   geometry_msgs::Twist twist;
   // If the trigger button or dead man's switch is pressed,
